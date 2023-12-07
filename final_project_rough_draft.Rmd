@@ -1,11 +1,13 @@
 ---
 title: "final_project_code"
 output: html_document
-date: "2023-11-27"
+date: "2023-11-28"
 ---
 
-# Step 1: Explanatory Data Analysis
+# 1: Explanatory Data Analysis and Feature Selection
 ## (1) Data visualization for potentially correlated variables
+
+First, let's read in the training set (75% of the original dataset) and testing set (25%), which is already split by the data provider. 
 ```{r}
 train_df <- read.csv("training.csv")
 test_df <- read.csv("testing.csv")
@@ -17,11 +19,7 @@ test_df <- subset(test_df, select = -date)
 
 names(train_df)
 ```
-Variables starting with T represent temperatures measured from different rooms of the hour, and variables starting with RH measured humidity. Let's plot a pairplot for each of these two 
-groups of variables to see if there are high correlation within each group. 
-
-
-For the subsequent feature selection, we will only use train_df.
+Variables starting with T represent temperatures measured from different rooms of the hour, and variables starting with RH measured humidity. Let's plot a pairplot for each of these two groups of variables to see if there are high correlation within each group. This step is to remove any correlated variables so as to avoid redundant information and prevent . Just a note that for the subsequent feature selection, we will only use train_df.
 ```{r}
 # install.packages("psych")
 library(psych)
