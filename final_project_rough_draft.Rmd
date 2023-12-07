@@ -4,11 +4,25 @@ output: html_document
 date: "2023-11-28"
 ---
 
+# Introduction:
+The utilization of energy by household appliances represents a significant portion of overall energy consumption. Understanding and predicting this usage is vital for energy conservation and efficiency efforts. Our project aims to analyze a dataset encompassing temperature and humidity readings from a wireless sensor network, weather data from a nearby airport station, and energy consumption records of lighting fixtures, to build a predictive model for appliance energy use.
+
+# Data Description:
+Link to dataset: https://archive.ics.uci.edu/dataset/374/appliances+energy+prediction 
+In 2017, a group of researchers from the Thermal Engineering and Combustion Laboratory at University of Mons in Belgium published a dataset about the energy consumption of home appliances, such as televisions and fridge, in a newly constructed low energy house. 
+The dataset is recorded at a 10 min interval for about 4.5 months, and it consists of 19735 instances and 31 features, which are summarized in the table in the Appendix. 
+The dataset is already split into a training set (14803 instances, 75% of the total data) and a testing set (4932), which we will directly use for the subsequent model development and evaluation. 
+
+
+“Appliances energy consumption” will be used as the target variable for the regression analysis.
+
+
 # 1: Explanatory Data Analysis and Feature Selection
 ## (1) Data visualization for potentially correlated variables
 
 First, let's read in the training set (75% of the original dataset) and testing set (25%), which is already split by the data provider. 
 ```{r}
+library(dplyr)
 train_df <- read.csv("training.csv")
 test_df <- read.csv("testing.csv")
 # View(train_df)
@@ -20,6 +34,8 @@ test_df <- subset(test_df, select = -date)
 names(train_df)
 ```
 Variables starting with T represent temperatures measured from different rooms of the hour, and variables starting with RH measured humidity. Let's plot a pairplot for each of these two groups of variables to see if there are high correlation within each group. This step is to remove any correlated variables so as to avoid redundant information and prevent . Just a note that for the subsequent feature selection, we will only use train_df.
+
+
 ```{r}
 # install.packages("psych")
 library(psych)
@@ -41,7 +57,11 @@ pairs.panels(humidity_vars,
              pch=21, 
              lm=TRUE)
 ```
-The first image of temperature variables seem to have strong positive correlations with each other, as indicated by several high correlation coefficients (values close to 1).For example, T_out (Temperature outside from Chievres weather station) and T_6 (Temperature outside the north side of the building) have a correlation of 0.97, T7 (Termperature in ironing room) and T9 (Temperature in parents room) have a correlation of 0.94, T5 (Temperature in bathroom) and T9 have a correlation of 0.9, T3 (Temperature in laundry room area) and T9 have a correlation of 0.90. We may consider dropping T_out and T_9, but we'll leave the actual feature selection in the next step with more quantitive approach. 
+The first image of temperature variables seem to have strong positive correlations with each other, as indicated by several high correlation coefficients (values close to 1).For example, T_out (Temperature outside from Chievres weather station) and T_6 (Temperature outside the north side of the building) have a correlation of 0.97, T7 (Termperature in ironing room) and T9 (Temperature in parents room) have a correlation of 0.94, T5 (Temperature in bathroom) and T9 have a correlation of 0.9, T3 (Temperature in laundry room area) and T9 have a correlation of 0.90. We may consider dropping T_out and T_9. For the correlation plot of humidities in different rooms, there isn't very high correlation value, so we'll keep all of them for now. 
+
+```{r}
+train_df <- train_df %>% select(-T_out, -T9)
+```
 
 
 In the second image, the humidity variables show less correlation among variables, so we'll also leave it unchanged. 
@@ -77,55 +97,10 @@ BIC shows that the best number of variable is 19. Let's see the coefficient esti
 coef(regfit.full, 19)
 ```
 
-## (3) Let's also use cross-validation to set the best features
-```{r}
-k <- 10
-n <- nrow(train_df)
-folds <- sample(rep(1:k, length = n))
 
-cv_errors <- matrix(NA, k, 32, dimnames = list(NULL, paste(1:32)))
+# Model Development: Linear Regression
 
-for(j in 1:k) {
-  
-  train_set <- train_df[folds != j, ]
-  test_set <- train_df[folds == j, ]
-  
-  regfit.best <- regsubsets(Appliances ~ ., data = train_set, nvmax = 32)
-
-  for(i in 1:32) {
-    coefi <- coef(regfit.best, id = i)
-    pred <- model.matrix(Appliances ~ ., data = test_set)[, names(coefi)] %*% coefi
-    cv_errors[j, i] <- mean((test_set$Appliances - pred)^2)
-  }
-}
-
-# average MSE for each model size across all folds
-mean_cv_errors <- apply(cv_errors, 2, mean)
-
-# model size with the lowest cross-validation error
-best_model_size <- which.min(mean_cv_errors)
-
-# fit the best model on the full dataset
-final_model <- regsubsets(Appliances ~ ., data = train_df, nvmax = 32)
-best_coefs <- coef(final_model, best_model_size)
-```
-
-
-```{r}
-print(best_model_size)
-print(best_coefs)
-
-```
-Since cross validation suggests we should use all variables, this may not be the best way for selecting the features. Let's stick with the 19 varibales we get from (b)
-
-# Step 2: Model Development
-
-## 1. 
-```{r}
-
-```
-
-
+Before developing the model, we select the best 19 variables that we obtained from Best Subset selection. Then we converted all the string variable to factor so that they can fit into linear regression. 
 
 ```{r}
 ## extract the variables for future model develepment and testing
@@ -144,7 +119,7 @@ test_set$Day_of_week <- as.factor(test_set$Day_of_week)
 ```
 
 
-(a) Linear Model with cross-validation
+Linear Model with 10-fold cross-validation
 ```{r}
 library(ggplot2)
 
@@ -179,43 +154,9 @@ plot(1:k, rss_values, xlab = "Fold", ylab = "RSS", type = "b", pch = 19, col = "
 model <- lm(Appliances ~ ., data = test_set)
 summary(model)
 ```
-As can be seen, RH_7 is not statistically significant
+As can be seen, RH_out and T5 are not statistically significant variables, but every othr variable does seem to be pretty statistically significant to our model. We can see that the variable with the largest slope is based on what the day of the week is and also based on RH1 and T2 which both correspond to humidity in the kitchen and the temperature in the living room. 
 
-(b) tree-based modelL random forest
-```{r}
-library(randomForest)
-set.seed(1)
-bag.model <- randomForest(Appliances ~ ., data = train_set,
-                           mtry = 19, importance = TRUE)
-#mtry = 19 tells R to use all of the predictors, which means we will use #bagging
-bag.model
 
-yhat.bag <- predict(bag.model, newdata = test_set)
-plot(yhat.bag)
-abline(0, 1)
-mean((yhat.bag - test_set)^2)
-```
-```{r}
-# to see how important each variable is
-rf.model <- randomForest(medv ~ ., data = Boston,
-                          subset = train, mtry = 6, importance = TRUE)
-yhat.rf <- predict(rf.model, newdata = train_set)
-mean((yhat.rf - model.test)^2)
-importance(rf.model)
-varImpPlot(rf.model)
-```
 
-(c) Boosting
-```{r}
-boost.model <- gbm(medv ~ ., data = train_set,
-                    distribution = "gaussian", n.trees = 5000,
-                    interaction.depth = 4)
 
-summary(boost.model)
-
-yhat.boost <- predict(boost.model,
-                      newdata = test_set,
-                      n.trees = 5000)
-mean((yhat.boost - test_set)^2)
-```
 
