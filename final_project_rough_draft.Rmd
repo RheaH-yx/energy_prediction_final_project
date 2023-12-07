@@ -1,0 +1,223 @@
+---
+title: "final_project_code"
+output: html_document
+date: "2023-11-27"
+---
+
+# Step 1: Explanatory Data Analysis
+## (1) Data visualization for potentially correlated variables
+```{r}
+train_df <- read.csv("training.csv")
+test_df <- read.csv("testing.csv")
+# View(train_df)
+
+# datetime objects can't be used for linear regression models, let's remove it
+train_df <- subset(train_df, select = -date)
+test_df <- subset(test_df, select = -date)
+
+names(train_df)
+```
+Variables starting with T represent temperatures measured from different rooms of the hour, and variables starting with RH measured humidity. Let's plot a pairplot for each of these two 
+groups of variables to see if there are high correlation within each group. 
+
+
+For the subsequent feature selection, we will only use train_df.
+```{r}
+# install.packages("psych")
+library(psych)
+
+temp_vars <- train_df[, grepl("^T", names(train_df))]
+humidity_vars <- train_df[, grepl("^RH", names(train_df))]
+
+# pairplot for temperature
+pairs.panels(temp_vars, 
+             gap=0.5, 
+             bg=c("red", "yellow", "blue")[unclass(temp_vars$T1)],
+             pch=21, 
+             lm=TRUE)
+
+# pairplot for humidity
+pairs.panels(humidity_vars, 
+             gap=0.5, 
+             bg=c("red", "yellow", "blue")[unclass(humidity_vars$RH_1)],
+             pch=21, 
+             lm=TRUE)
+```
+The first image of temperature variables seem to have strong positive correlations with each other, as indicated by several high correlation coefficients (values close to 1).For example, T_out (Temperature outside from Chievres weather station) and T_6 (Temperature outside the north side of the building) have a correlation of 0.97, T7 (Termperature in ironing room) and T9 (Temperature in parents room) have a correlation of 0.94, T5 (Temperature in bathroom) and T9 have a correlation of 0.9, T3 (Temperature in laundry room area) and T9 have a correlation of 0.90. We may consider dropping T_out and T_9, but we'll leave the actual feature selection in the next step with more quantitive approach. 
+
+
+In the second image, the humidity variables show less correlation among variables, so we'll also leave it unchanged. 
+
+
+## (2) Best Subset Selection
+```{r}
+library(leaps)
+regfit.full <- regsubsets(Appliances ~ ., train_df, , nvmax = 35)
+reg.summary <- summary(regfit.full)
+```
+
+```{r}
+plot(reg.summary$adjr2, xlab = "Number of Variables",
+     ylab = "Adjusted RSq", type = "l")
+points(which.max(reg.summary$adjr2), reg.summary$adjr2[which.max(reg.summary$adjr2)], col = "red", cex = 2, pch=20)
+
+plot(reg.summary$rss, xlab = "Number of Variables",
+     ylab = "RSS", type = "l")
+points(which.min(reg.summary$rss), reg.summary$rss[which.min(reg.summary$rss)], col = "red", cex = 2, pch=20)
+
+plot(reg.summary$cp, xlab = "Number of Variables",
+     ylab = "C_p", type = "l")
+points(which.min(reg.summary$cp), reg.summary$cp[which.min(reg.summary$cp)], col = "red", cex = 2, pch=20)
+
+plot(reg.summary$bic, xlab = "Number of Variables",
+     ylab = "BIC", type = "l")
+points(which.min(reg.summary$bic), reg.summary$bic[which.min(reg.summary$bic)], col = "red", cex = 2, pch=20)
+```
+BIC shows that the best number of variable is 19. Let's see the coefficient estimate for this model
+
+```{r}
+coef(regfit.full, 19)
+```
+
+## (3) Let's also use cross-validation to set the best features
+```{r}
+k <- 10
+n <- nrow(train_df)
+folds <- sample(rep(1:k, length = n))
+
+cv_errors <- matrix(NA, k, 32, dimnames = list(NULL, paste(1:32)))
+
+for(j in 1:k) {
+  
+  train_set <- train_df[folds != j, ]
+  test_set <- train_df[folds == j, ]
+  
+  regfit.best <- regsubsets(Appliances ~ ., data = train_set, nvmax = 32)
+
+  for(i in 1:32) {
+    coefi <- coef(regfit.best, id = i)
+    pred <- model.matrix(Appliances ~ ., data = test_set)[, names(coefi)] %*% coefi
+    cv_errors[j, i] <- mean((test_set$Appliances - pred)^2)
+  }
+}
+
+# average MSE for each model size across all folds
+mean_cv_errors <- apply(cv_errors, 2, mean)
+
+# model size with the lowest cross-validation error
+best_model_size <- which.min(mean_cv_errors)
+
+# fit the best model on the full dataset
+final_model <- regsubsets(Appliances ~ ., data = train_df, nvmax = 32)
+best_coefs <- coef(final_model, best_model_size)
+```
+
+
+```{r}
+print(best_model_size)
+print(best_coefs)
+
+```
+Since cross validation suggests we should use all variables, this may not be the best way for selecting the features. Let's stick with the 19 varibales we get from (b)
+
+# Step 2: Model Development
+
+## 1. 
+```{r}
+
+```
+
+
+
+```{r}
+## extract the variables for future model develepment and testing
+best_vars <- names(coef(regfit.full, 19))
+best_vars <- best_vars[best_vars != "(Intercept)"]
+best_vars <- best_vars[1:(length(best_vars) - 6)]
+best_vars <- c(best_vars, "WeekStatus", "Day_of_week")
+
+train_set <- train_df[, c("Appliances", best_vars)]
+test_set <- test_df[, c("Appliances", best_vars)]
+
+train_set$WeekStatus <- as.factor(train_set$WeekStatus)
+train_set$Day_of_week <- as.factor(train_set$Day_of_week)
+test_set$WeekStatus <- as.factor(test_set$WeekStatus)
+test_set$Day_of_week <- as.factor(test_set$Day_of_week)
+```
+
+
+(a) Linear Model with cross-validation
+```{r}
+library(ggplot2)
+
+k <- 10
+folds <- cut(seq(1, nrow(test_set)), breaks = k, labels = FALSE)
+
+rss_values <- numeric(k)
+
+# cross-validation
+for(i in 1:k) {
+  # Split the data into training and testing sets
+  test_indices <- which(folds == i, arr.ind = TRUE)
+  train_indices <- setdiff(seq_len(nrow(test_set)), test_indices)
+  train_data <- test_set[train_indices, ]
+  test_data <- test_set[test_indices, ]
+
+  model <- lm(Appliances ~ ., data = train_data)
+
+  predicted <- predict(model, test_data)
+  rss <- sum((test_data$Appliances - predicted)^2)
+  rss_values[i] <- rss
+  
+  cat("Fold =", i)
+  cat("\nThe associated residual sum of squares is,", rss, "\n\n")
+}
+
+# plot the RSS values for each fold
+plot(1:k, rss_values, xlab = "Fold", ylab = "RSS", type = "b", pch = 19, col = "blue")
+```
+```{r}
+## get a summary of the linear model test on test_set
+model <- lm(Appliances ~ ., data = test_set)
+summary(model)
+```
+As can be seen, RH_7 is not statistically significant
+
+(b) tree-based modelL random forest
+```{r}
+library(randomForest)
+set.seed(1)
+bag.model <- randomForest(Appliances ~ ., data = train_set,
+                           mtry = 19, importance = TRUE)
+#mtry = 19 tells R to use all of the predictors, which means we will use #bagging
+bag.model
+
+yhat.bag <- predict(bag.model, newdata = test_set)
+plot(yhat.bag)
+abline(0, 1)
+mean((yhat.bag - test_set)^2)
+```
+```{r}
+# to see how important each variable is
+rf.model <- randomForest(medv ~ ., data = Boston,
+                          subset = train, mtry = 6, importance = TRUE)
+yhat.rf <- predict(rf.model, newdata = train_set)
+mean((yhat.rf - model.test)^2)
+importance(rf.model)
+varImpPlot(rf.model)
+```
+
+(c) Boosting
+```{r}
+boost.model <- gbm(medv ~ ., data = train_set,
+                    distribution = "gaussian", n.trees = 5000,
+                    interaction.depth = 4)
+
+summary(boost.model)
+
+yhat.boost <- predict(boost.model,
+                      newdata = test_set,
+                      n.trees = 5000)
+mean((yhat.boost - test_set)^2)
+```
+
